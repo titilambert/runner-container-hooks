@@ -1,6 +1,7 @@
 import * as core from '@actions/core'
 import * as io from '@actions/io'
 import * as k8s from '@kubernetes/client-node'
+import yaml from 'yaml-js';
 import { ContextPorts, prepareJobArgs, writeToResponseFile } from 'hooklib'
 import path from 'path'
 import {
@@ -47,7 +48,7 @@ export async function prepareJob(
   }
   let createdPod: k8s.V1Pod | undefined = undefined
   try {
-    createdPod = await createPod(container, services, args.container.registry)
+    createdPod = await createPod(container, services, args.container)
   } catch (err) {
     await prunePods()
     throw new Error(`failed to create job pod: ${err}`)
@@ -192,6 +193,13 @@ export function createContainerSpec(
     container.userMountVolumes,
     jobContainer
   )
+
+  // Read options from worlflow
+  const options = yaml.load(container.createOptions)
+  // Apply resources if defined
+  if (options.resources !== undefined) {
+    podContainer.resources = options.resources
+  }
 
   return podContainer
 }

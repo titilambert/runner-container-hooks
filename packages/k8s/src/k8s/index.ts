@@ -11,6 +11,7 @@ import {
   RunnerInstanceLabel
 } from '../hooks/constants'
 import { PodPhase } from './utils'
+import yaml from 'yaml-js';
 
 const kc = new k8s.KubeConfig()
 
@@ -58,8 +59,9 @@ export const requiredPermissions = [
 export async function createPod(
   jobContainer?: k8s.V1Container,
   services?: k8s.V1Container[],
-  registry?: Registry
+  container?: ContainerInfo,
 ): Promise<k8s.V1Pod> {
+  const registry = container.registry
   const containers: k8s.V1Container[] = []
   if (jobContainer) {
     containers.push(jobContainer)
@@ -78,13 +80,34 @@ export async function createPod(
 
   const instanceLabel = new RunnerInstanceLabel()
   appPod.metadata.labels = {
-    [instanceLabel.key]: instanceLabel.value
+    [instanceLabel.key]: instanceLabel.value,
+  }
+
+  // Read options from worlflow
+  const options = yaml.load(container.createOptions)
+  // Apply pod labels
+  // TODO check options.podLabels types
+  if (options.podLabels !== undefined) {
+    for (const [key, value] of Object.entries(options.podLabels)) {
+      const strkey = (key as string)
+      const strvalue =  (value as string)
+      appPod.metadata.labels[strkey] = strvalue
+    }
   }
 
   appPod.spec = new k8s.V1PodSpec()
   appPod.spec.containers = containers
   appPod.spec.restartPolicy = 'Never'
-  appPod.spec.nodeName = await getCurrentNodeName()
+  // We don't need this if we are using a Storage class that support RWX
+  //appPod.spec.nodeName = await getCurrentNodeName()
+  // Apply node selector
+  if (options.podNodeSelector !== undefined) {
+    appPod.spec.nodeSelector = options.podNodeSelector
+  }
+  // Apply tolerations
+  if (options.podTolerations !== undefined) {
+    appPod.spec.tolerations = options.podTolerations
+  }
   const claimName = getVolumeClaimName()
   appPod.spec.volumes = [
     {
@@ -117,7 +140,9 @@ export async function createJob(
   job.kind = 'Job'
   job.metadata = new k8s.V1ObjectMeta()
   job.metadata.name = getStepPodName()
-  job.metadata.labels = { [runnerInstanceLabel.key]: runnerInstanceLabel.value }
+  job.metadata.labels = {
+    [runnerInstanceLabel.key]: runnerInstanceLabel.value,
+  }
 
   job.spec = new k8s.V1JobSpec()
   job.spec.ttlSecondsAfterFinished = 300
@@ -127,7 +152,8 @@ export async function createJob(
   job.spec.template.spec = new k8s.V1PodSpec()
   job.spec.template.spec.containers = [container]
   job.spec.template.spec.restartPolicy = 'Never'
-  job.spec.template.spec.nodeName = await getCurrentNodeName()
+  // We don't need this if we are using a Storage class that support RWX
+  //job.spec.template.spec.nodeName = await getCurrentNodeName()
 
   const claimName = getVolumeClaimName()
   job.spec.template.spec.volumes = [
